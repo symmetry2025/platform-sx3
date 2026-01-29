@@ -8,9 +8,13 @@
 
 ### Как пользоваться в Cursor
 
-- Открывайте workspace как папку `symmetry-workspace/`.
+- Открывайте workspace как папку `Symmetry Workspace/` (корень этого репозитория).
 - Либо откройте файл `SYMMETRY_WORKSPACE.code-workspace`.
 
 ### Документация SX3
 
 - Основной документ: `docs/SX3_MASTER_PLAN.md`.
+
+### Промпт для агента SX3
+
+- `docs/SX3_AGENT_PROMPT.md`
