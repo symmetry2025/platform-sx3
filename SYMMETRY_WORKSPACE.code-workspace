@@ -1,0 +1,18 @@
+{
+  "folders": [
+    { "name": "sx2-platform (symlink)", "path": "sx2-platform" },
+    { "name": "sx3-platform", "path": "sx3-platform" },
+    { "name": "projects", "path": "projects" },
+    { "name": "legacy-worktrees (symlink)", "path": "legacy-worktrees" }
+  ],
+  "settings": {
+    "files.watcherExclude": {
+      "**/node_modules/**": true,
+      "**/.git/**": true,
+      "**/dist/**": true,
+      "**/build/**": true,
+      "**/.next/**": true,
+      "**/.turbo/**": true
+    }
+  }
+}
