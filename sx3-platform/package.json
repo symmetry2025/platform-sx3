@@ -1,0 +1,17 @@
+{
+  "name": "sx3-platform",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@smmtry/sx3-cli": "workspace:*"
+  },
+  "scripts": {
+    "smmtryx3": "node ./packages/cli/bin/smmtryx3.js",
+    "build": "node -e \"console.log('[sx3-platform] build: noop');\"",
+    "typecheck": "node -e \"console.log('[sx3-platform] typecheck: noop');\"",
+    "test": "node -e \"console.log('[sx3-platform] test: noop');\""
+  }
+}
+

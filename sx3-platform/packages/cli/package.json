@@ -1,0 +1,14 @@
+{
+  "name": "@smmtry/sx3-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "sql.js": "^1.13.0"
+  },
+  "bin": {
+    "smmtryx3": "./bin/smmtryx3.js"
+  }
+}
+

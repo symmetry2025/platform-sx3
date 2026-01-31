@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Short wrapper for `smmtryx3`:
+# - ensures local Node + pnpm are available via .tools (no sudo)
+# - then runs `pnpm exec smmtryx3 ...` (or falls back to node when possible)
+#
+# Usage:
+#   ./sx3 --help
+#   ./sx3 home
+#   ./sx3 db migrate --apply   # (будет реализовано на следующих этапах)
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+TOOLS_ENV="${REPO_ROOT}/.tools/env.sh"
+SETUP_NODE="${REPO_ROOT}/scripts/setup-local-node.sh"
+
+if [[ -f "${TOOLS_ENV}" ]]; then
+  # shellcheck source=/dev/null
+  source "${TOOLS_ENV}"
+else
+  if [[ -x "${SETUP_NODE}" ]]; then
+    "${SETUP_NODE}"
+    # shellcheck source=/dev/null
+    source "${TOOLS_ENV}"
+  fi
+fi
+
+# IMPORTANT: `sx3 home` is often used as `eval "$(./sx3 home)"`.
+# Avoid any extra stdout noise here: render snippet directly via node (no pnpm).
+if [[ "${1:-}" == "home" ]]; then
+  exec node "${REPO_ROOT}/packages/cli/bin/smmtryx3.js" home
+fi
+
+# For stage 0, `--help` should work even before pnpm install.
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || "${1:-}" == "help" || "${1:-}" == "" ]]; then
+  exec node "${REPO_ROOT}/packages/cli/bin/smmtryx3.js" "${@:-}"
+fi
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  # Try to enable pnpm via corepack (bundled with Node)
+  if command -v corepack >/dev/null 2>&1; then
+    corepack enable >/dev/null 2>&1 || true
+    corepack prepare pnpm@latest --activate >/dev/null 2>&1 || true
+  fi
+fi
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "ERROR: pnpm не найден. Попробуй:" >&2
+  echo "  source ./.tools/env.sh" >&2
+  echo "  corepack enable && corepack prepare pnpm@latest --activate" >&2
+  echo "  pnpm install" >&2
+  exit 2
+fi
+
+cd "${REPO_ROOT}"
+exec pnpm exec smmtryx3 "$@"
+
