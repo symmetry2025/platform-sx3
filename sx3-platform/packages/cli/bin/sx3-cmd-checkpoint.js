@@ -15,6 +15,7 @@ Usage:
                     [--dry-run | --apply]
                     [--allow-dirty]
                     [--allow-active-attempts]
+                    [--init-remote]
                     [--format human|min-json|jsonl]
                     [--db <path>]
   sx3 checkpoint show <checkpoint_id> [--db <path>]
@@ -26,6 +27,7 @@ Notes:
   - Если --session не указан, берём последнюю open session из SQLite.
   - В apply-режиме checkpoint пушит session/<id> в remote и затем синхронизирует worktrees к подтверждённому sha.
   - В apply-режиме checkpoint по умолчанию запрещён при активных attempts (runner работает) — можно override флагом --allow-active-attempts.
+  - Если remote-ref не существует (первый пуш), используй --init-remote и --remote-confirm-sha init.
 `);
 }
 
@@ -120,6 +122,11 @@ function mustRemoteConfirmSha(opts) {
     });
   }
   return s;
+}
+
+function isInitConfirmToken(s) {
+  const v = String(s || '').trim().toLowerCase();
+  return v === 'init' || v === 'missing';
 }
 
 function shouldApply(opts) {
@@ -258,26 +265,49 @@ async function cmdRun(opts) {
     localSessionSha = head;
   }
 
-  const remoteHead = revParse(remoteRef, { cwd: gitRoot });
-  if (!remoteHead) {
-    checkpointFail(opts, {
-      stage: 'checkpoint.git',
-      reason: 'remote_ref_unreadable',
-      message: `не удалось прочитать remote-ref=${remoteRef}. Подсказка: попробуй --remote-ref HEAD (dev) или --fetch`,
-      next_step_cmd: `./sx3 checkpoint run --session ${sessionId} --remote-ref HEAD --remote-confirm-sha ${localSessionSha} --dry-run`,
-      details: { remote_ref: remoteRef },
-    });
-  }
-
+  let remoteHead = revParse(remoteRef, { cwd: gitRoot });
   const confirm = mustRemoteConfirmSha(opts);
-  if (confirm !== remoteHead) {
-    checkpointFail(opts, {
-      stage: 'checkpoint.guard',
-      reason: 'remote_confirm_mismatch',
-      message: `remote-confirm-sha mismatch (current=${remoteHead}, got=${confirm})`,
-      next_step_cmd: `./sx3 checkpoint run --session ${sessionId} --remote-ref ${remoteRef} --remote-confirm-sha ${remoteHead} --dry-run`,
-      details: { current_remote_sha: remoteHead, provided: confirm, remote_ref: remoteRef },
-    });
+  const initRemote = Boolean(opts && opts['init-remote']);
+
+  if (!remoteHead) {
+    if (!apply) {
+      checkpointFail(opts, {
+        stage: 'checkpoint.git',
+        reason: 'remote_ref_missing',
+        message: `remote-ref не существует: ${remoteRef}`,
+        next_step_cmd: `./sx3 checkpoint run --session ${sessionId} --remote-ref ${remoteRef} --remote-confirm-sha init --apply --init-remote`,
+        details: { remote_ref: remoteRef },
+      });
+    }
+    if (!initRemote) {
+      checkpointFail(opts, {
+        stage: 'checkpoint.git',
+        reason: 'remote_ref_missing',
+        message: `remote-ref не существует: ${remoteRef} (для первого пуша нужен явный --init-remote)`,
+        next_step_cmd: `./sx3 checkpoint run --session ${sessionId} --remote-ref ${remoteRef} --remote-confirm-sha init --apply --init-remote`,
+        details: { remote_ref: remoteRef },
+      });
+    }
+    if (!isInitConfirmToken(confirm)) {
+      checkpointFail(opts, {
+        stage: 'checkpoint.guard',
+        reason: 'remote_confirm_required_for_init',
+        message: `remote-ref отсутствует, но remote-confirm-sha не равен "init"`,
+        next_step_cmd: `./sx3 checkpoint run --session ${sessionId} --remote-ref ${remoteRef} --remote-confirm-sha init --apply --init-remote`,
+        details: { remote_ref: remoteRef, provided: confirm },
+      });
+    }
+    // init: allow creating remote via push later
+  } else {
+    if (confirm !== remoteHead) {
+      checkpointFail(opts, {
+        stage: 'checkpoint.guard',
+        reason: 'remote_confirm_mismatch',
+        message: `remote-confirm-sha mismatch (current=${remoteHead}, got=${confirm})`,
+        next_step_cmd: `./sx3 checkpoint run --session ${sessionId} --remote-ref ${remoteRef} --remote-confirm-sha ${remoteHead} --dry-run`,
+        details: { current_remote_sha: remoteHead, provided: confirm, remote_ref: remoteRef },
+      });
+    }
   }
 
   const allowDirty = Boolean(opts && opts['allow-dirty']);
@@ -295,9 +325,9 @@ async function cmdRun(opts) {
   db.run(
     `INSERT INTO checkpoints(id, session_id, status, started_at, finished_at, session_head_sha_local, session_head_sha_remote, synced_worktrees_json, report_json)
      VALUES (?, ?, 'running', datetime('now'), NULL, ?, ?, NULL, NULL);`,
-    [checkpointId, sessionId, localSessionSha, remoteHead],
+    [checkpointId, sessionId, localSessionSha, remoteHead || null],
   );
-  insertEvent(db, 'checkpoint.started', { session_id: sessionId, checkpoint_id: checkpointId, local: localSessionSha, remote: remoteHead });
+  insertEvent(db, 'checkpoint.started', { session_id: sessionId, checkpoint_id: checkpointId, local: localSessionSha, remote: remoteHead || null });
   persistDb(db, dbPath);
 
   /** @type {any} */
@@ -309,6 +339,7 @@ async function cmdRun(opts) {
     local_session_sha: localSessionSha,
     local_session_branch_missing: localSessionBranchMissing ? 1 : 0,
     remote_head: remoteHead,
+    init_remote: initRemote ? 1 : 0,
     apply: apply ? 1 : 0,
     allow_dirty: allowDirty ? 1 : 0,
     allow_active_attempts: allowActiveAttempts ? 1 : 0,
@@ -317,7 +348,8 @@ async function cmdRun(opts) {
   };
 
   try {
-    const rel = relation(localSessionSha, remoteHead, { cwd: gitRoot });
+    // If remote is missing, treat as "ahead-only" for purposes of init push.
+    const rel = remoteHead ? relation(localSessionSha, remoteHead, { cwd: gitRoot }) : { kind: 'ahead-only' };
     report.relation = rel.kind;
 
     // Policy engine v1 (from master plan)
@@ -346,6 +378,7 @@ async function cmdRun(opts) {
           if (!newRemote || newRemote !== localSessionSha) {
             throw new Error(`remote_verify_failed: expected ${localSessionSha}, got ${newRemote || 'null'}`);
           }
+          remoteHead = newRemote;
         }
       }
       targetSha = localSessionSha;
@@ -376,7 +409,7 @@ async function cmdRun(opts) {
            synced_worktrees_json=?,
            report_json=?
        WHERE id=?;`,
-      [targetSha, revParse(remoteRef, { cwd: gitRoot }) || remoteHead, JSON.stringify(synced), JSON.stringify(report), checkpointId],
+      [targetSha, revParse(remoteRef, { cwd: gitRoot }) || remoteHead || null, JSON.stringify(synced), JSON.stringify(report), checkpointId],
     );
     insertEvent(db, 'checkpoint.finished', { session_id: sessionId, checkpoint_id: checkpointId, ok: 1 });
     persistDb(db, dbPath);
