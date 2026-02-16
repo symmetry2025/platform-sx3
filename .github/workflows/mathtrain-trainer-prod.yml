@@ -40,7 +40,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: projects
-          file: projects/symmetry-trainer/trainer-wt/_main/Dockerfile
+          file: symmetry-trainer/trainer-wt/_main/Dockerfile
           push: true
           tags: |
             ${{ env.IMAGE }}:${{ steps.tag.outputs.name }}
