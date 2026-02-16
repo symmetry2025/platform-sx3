@@ -136,12 +136,16 @@ export function SumTableSession(props: {
       removeListener?: (listener: () => void) => void;
     };
     if (typeof mqAny.addEventListener === 'function' && typeof mqAny.removeEventListener === 'function') {
-      mqAny.addEventListener('change', apply);
-      return () => mqAny.removeEventListener('change', apply);
+      const add = mqAny.addEventListener.bind(mq);
+      const remove = mqAny.removeEventListener.bind(mq);
+      add('change', apply);
+      return () => remove('change', apply);
     }
     if (typeof mqAny.addListener === 'function' && typeof mqAny.removeListener === 'function') {
-      mqAny.addListener(apply);
-      return () => mqAny.removeListener(apply);
+      const add = mqAny.addListener.bind(mq);
+      const remove = mqAny.removeListener.bind(mq);
+      add(apply);
+      return () => remove(apply);
     }
     return () => undefined;
   }, []);
