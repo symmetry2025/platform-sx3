@@ -33,7 +33,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: projects
-          file: symmetry-trainer/trainer-wt/_main/Dockerfile
+          file: projects/symmetry-trainer/trainer-wt/_main/Dockerfile
           push: true
           tags: |
             ${{ env.IMAGE }}:staging

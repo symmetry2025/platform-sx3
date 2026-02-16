@@ -4,6 +4,8 @@ node_modules
 .env.local
 .DS_Store
 dist
+!packages/shared/dist/
+!packages/shared/dist/**
 coverage
 .turbo
 .vercel

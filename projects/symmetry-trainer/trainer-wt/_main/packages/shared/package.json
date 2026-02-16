@@ -1,0 +1,17 @@
+{
+  "name": "@smmtry/shared",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "zod": "^4.3.4"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  }
+}
+

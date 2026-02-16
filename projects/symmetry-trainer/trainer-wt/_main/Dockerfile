@@ -12,9 +12,8 @@ WORKDIR /repo
 
 # IMPORTANT:
 # Build context is expected to be the `projects/` folder (see `infra/prod/docker-compose.yml`).
-# We copy both this app and the local `@smmtry/shared` dependency (file:../../../symmetry-account/...).
+# `@smmtry/shared` is vendored locally under `packages/shared` inside this app.
 COPY symmetry-trainer/trainer-wt/_main ./symmetry-trainer/trainer-wt/_main
-COPY symmetry-account/account-wt/_main/packages/shared ./symmetry-account/account-wt/_main/packages/shared
 
 WORKDIR /repo/symmetry-trainer/trainer-wt/_main
 

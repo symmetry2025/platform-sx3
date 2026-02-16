@@ -6,7 +6,7 @@
     "@fontsource/jetbrains-mono": "^5.1.2",
     "@fontsource/nunito": "^5.1.2",
     "@prisma/client": "^5.22.0",
-    "@smmtry/shared": "file:../../../symmetry-account/account-wt/_main/packages/shared",
+    "@smmtry/shared": "file:packages/shared",
     "bcryptjs": "^2.4.3",
     "clsx": "^2.1.1",
     "lucide-react": "^0.462.0",
