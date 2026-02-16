@@ -1,0 +1,161 @@
+name: mathtrain-trainer (staging)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/mathtrain-trainer-staging.yml"
+      - "projects/symmetry-trainer/trainer-wt/_main/**"
+      - "projects/symmetry-account/account-wt/_main/packages/shared/**"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/trainer-standalone
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push (staging)
+        uses: docker/build-push-action@v6
+        with:
+          context: projects
+          file: projects/symmetry-trainer/trainer-wt/_main/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:staging
+            ${{ env.IMAGE }}:staging-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    # GitHub validates `if:` expressions and does not allow `secrets.*` here.
+    # Control deploy via repository variable VPS_DEPLOY_ENABLED=1.
+    if: ${{ vars.VPS_DEPLOY_ENABLED == '1' }}
+    environment: staging
+    steps:
+      - name: Deploy to VPS (staging)
+        uses: appleboy/ssh-action@v1.1.0
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_IP_FAMILY: ${{ secrets.SMTP_IP_FAMILY }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          WEB_BASE_URL: ${{ secrets.WEB_BASE_URL }}
+          EMAIL_CONFIRM_TTL_HOURS: ${{ secrets.EMAIL_CONFIRM_TTL_HOURS }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          envs: SMTP_HOST,SMTP_PORT,SMTP_SECURE,SMTP_USER,SMTP_PASS,SMTP_IP_FAMILY,MAIL_FROM,WEB_BASE_URL,EMAIL_CONFIRM_TTL_HOURS
+          script: |
+            set -euo pipefail
+            cd /opt/mathtrain/staging
+            ENV_FILE="./.env"
+
+            sanitize_env_value() {
+              # Replace CR/LF with spaces to avoid breaking .env format.
+              local v="${1:-}"
+              v="${v//$'\r'/ }"
+              v="${v//$'\n'/ }"
+              echo "$v"
+            }
+
+            clean_env_file_in_place() {
+              local file="$1"
+              [[ -f "$file" ]] || return 0
+              # Keep only: empty lines, comments, KEY=VALUE lines. Drop everything else to avoid docker compose parse errors.
+              awk '
+                /^[[:space:]]*$/ { print; next }
+                /^[[:space:]]*#/ { print; next }
+                /^[A-Za-z_][A-Za-z0-9_]*=/ { print; next }
+                { print "[deploy] dropped invalid .env line " NR > "/dev/stderr" }
+              ' "$file" > "$file.__deploy_clean__"
+              mv "$file.__deploy_clean__" "$file"
+            }
+
+            upsert_env_var() {
+              local key="$1"
+              local value="$2"
+              local file="$3"
+              value="$(sanitize_env_value "$value")"
+              local esc="${value//\\/\\\\}"
+              esc="${esc//\"/\\\"}"
+              local line="${key}=\"${esc}\""
+              local tmp
+              tmp="$(mktemp)"
+              if [[ -f "$file" ]]; then
+                grep -vE "^${key}=" "$file" > "$tmp" || true
+              fi
+              printf "%s\n" "$line" >> "$tmp"
+              mv "$tmp" "$file"
+            }
+
+            maybe_upsert_env_var() {
+              local key="$1"
+              local value="${2:-}"
+              local file="$3"
+              if [[ -z "$value" ]]; then
+                echo "[deploy] skip $key (empty)"
+                return 0
+              fi
+              upsert_env_var "$key" "$value" "$file"
+            }
+
+            touch "$ENV_FILE"
+            chmod 600 "$ENV_FILE" || true
+            clean_env_file_in_place "$ENV_FILE"
+
+            maybe_upsert_env_var SMTP_HOST "${SMTP_HOST:-}" "$ENV_FILE"
+            maybe_upsert_env_var SMTP_PORT "${SMTP_PORT:-}" "$ENV_FILE"
+            maybe_upsert_env_var SMTP_SECURE "${SMTP_SECURE:-}" "$ENV_FILE"
+            maybe_upsert_env_var SMTP_USER "${SMTP_USER:-}" "$ENV_FILE"
+            maybe_upsert_env_var SMTP_PASS "${SMTP_PASS:-}" "$ENV_FILE"
+            maybe_upsert_env_var SMTP_IP_FAMILY "${SMTP_IP_FAMILY:-}" "$ENV_FILE"
+            maybe_upsert_env_var MAIL_FROM "${MAIL_FROM:-}" "$ENV_FILE"
+            maybe_upsert_env_var WEB_BASE_URL "${WEB_BASE_URL:-}" "$ENV_FILE"
+            maybe_upsert_env_var EMAIL_CONFIRM_TTL_HOURS "${EMAIL_CONFIRM_TTL_HOURS:-}" "$ENV_FILE"
+
+            require_env_key() {
+              local key="$1"
+              local file="$2"
+              if grep -qE "^${key}=" "$file"; then
+                echo "[deploy] ok: $key is set"
+                return 0
+              fi
+              echo "[deploy] missing: $key" >&2
+              return 1
+            }
+
+            missing=0
+            for k in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS MAIL_FROM; do
+              require_env_key "$k" "$ENV_FILE" || missing=1
+            done
+            if [[ "$missing" -ne 0 ]]; then
+              echo "[deploy] required env keys are missing in $ENV_FILE; abort deploy" >&2
+              exit 1
+            fi
+
+            IMAGE="${{ env.IMAGE }}" APP_TAG="staging" docker compose -f compose.yml pull
+            IMAGE="${{ env.IMAGE }}" APP_TAG="staging" docker compose -f compose.yml up -d
+            docker compose -f compose.yml ps
+

@@ -1,0 +1,15 @@
+.next
+node_modules
+.env
+.env.local
+.DS_Store
+dist
+coverage
+.turbo
+.vercel
+*.tsbuildinfo
+
+# local DB / data
+.data
+prisma/dev.db*
+
