@@ -128,13 +128,22 @@ export function SumTableSession(props: {
     const mq = window.matchMedia('(max-width: 767px)');
     const apply = () => setIsMobile(mq.matches);
     apply();
-    // Safari < 14 uses addListener/removeListener.
-    if ('addEventListener' in mq) {
-      mq.addEventListener('change', apply);
-      return () => mq.removeEventListener('change', apply);
+    // Safari < 14 uses addListener/removeListener (not in TS DOM typings).
+    const mqAny = mq as unknown as {
+      addEventListener?: (type: 'change', listener: () => void) => void;
+      removeEventListener?: (type: 'change', listener: () => void) => void;
+      addListener?: (listener: () => void) => void;
+      removeListener?: (listener: () => void) => void;
+    };
+    if (typeof mqAny.addEventListener === 'function' && typeof mqAny.removeEventListener === 'function') {
+      mqAny.addEventListener('change', apply);
+      return () => mqAny.removeEventListener('change', apply);
     }
-    mq.addListener(apply);
-    return () => mq.removeListener(apply);
+    if (typeof mqAny.addListener === 'function' && typeof mqAny.removeListener === 'function') {
+      mqAny.addListener(apply);
+      return () => mqAny.removeListener(apply);
+    }
+    return () => undefined;
   }, []);
 
   const problems = useMemo(() => {
