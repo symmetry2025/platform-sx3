@@ -13,6 +13,17 @@ type SmtpConfig = {
   ipFamily: 0 | 4 | 6;
 };
 
+function cleanEnvValue(raw: unknown): string {
+  let v = String(raw ?? '').trim();
+  // Avoid broken values when env got serialized with newlines.
+  v = v.replaceAll('\r', ' ').replaceAll('\n', ' ').trim();
+  // Strip wrapping quotes if present (common when .env / secrets include quotes).
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
 function parseBool(raw: string | undefined, fallback: boolean): boolean {
   const v = (raw ?? '').trim().toLowerCase();
   if (!v) return fallback;
@@ -31,13 +42,13 @@ function parseIpFamily(raw: unknown): 0 | 4 | 6 {
 }
 
 function readSmtpConfigFromEnv(env: NodeJS.ProcessEnv): SmtpConfig {
-  const host = String(env.SMTP_HOST ?? '').trim();
-  const portRaw = String(env.SMTP_PORT ?? '').trim();
+  const host = cleanEnvValue(env.SMTP_HOST);
+  const portRaw = cleanEnvValue(env.SMTP_PORT);
   const port = portRaw ? Number(portRaw) : NaN;
   const secure = parseBool(env.SMTP_SECURE, port === 465);
-  const user = String(env.SMTP_USER ?? '').trim();
-  const pass = String(env.SMTP_PASS ?? '').trim();
-  const from = String(env.MAIL_FROM ?? '').trim();
+  const user = cleanEnvValue(env.SMTP_USER);
+  const pass = cleanEnvValue(env.SMTP_PASS);
+  const from = cleanEnvValue(env.MAIL_FROM);
   const ipFamily = parseIpFamily(env.SMTP_IP_FAMILY);
 
   if (!host) throw new Error('SMTP_HOST is required');
@@ -65,38 +76,77 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   });
 }
 
+function serializeMailError(err: unknown): Record<string, unknown> {
+  if (!err || typeof err !== 'object') return { message: String(err) };
+  const e = err as any;
+  return {
+    name: typeof e.name === 'string' ? e.name : undefined,
+    message: typeof e.message === 'string' ? e.message : String(err),
+    code: typeof e.code === 'string' ? e.code : undefined,
+    command: typeof e.command === 'string' ? e.command : undefined,
+    responseCode: typeof e.responseCode === 'number' ? e.responseCode : undefined,
+    response: typeof e.response === 'string' ? e.response : undefined,
+    errno: typeof e.errno === 'number' ? e.errno : undefined,
+    syscall: typeof e.syscall === 'string' ? e.syscall : undefined,
+    address: typeof e.address === 'string' ? e.address : undefined,
+    port: typeof e.port === 'number' ? e.port : undefined,
+  };
+}
+
 export async function sendMail(params: { to: string } & RenderedEmail): Promise<{ messageId?: string }> {
   const to = params.to.trim();
   if (!to) throw new Error('Missing "to"');
 
   const cfg = readSmtpConfigFromEnv(process.env);
-  const transportTimeoutMs = 10_000;
+  const connectionTimeoutMs = 10_000;
+  const greetingTimeoutMs = 10_000;
+  const socketTimeoutMs = 20_000;
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `[mail] sending host=${cfg.host} port=${cfg.port} secure=${cfg.secure} family=${cfg.ipFamily} user=${cfg.user} from="${cfg.from}" to="${to}"`,
+  );
+
   const transporter = nodemailer.createTransport({
     host: cfg.host,
     port: cfg.port,
     secure: cfg.secure,
     auth: { user: cfg.user, pass: cfg.pass },
-    connectionTimeout: transportTimeoutMs,
-    greetingTimeout: transportTimeoutMs,
-    socketTimeout: transportTimeoutMs,
+    connectionTimeout: connectionTimeoutMs,
+    greetingTimeout: greetingTimeoutMs,
+    socketTimeout: socketTimeoutMs,
     family: cfg.ipFamily === 0 ? undefined : cfg.ipFamily,
   } as SMTPTransport.Options);
 
   const startedAt = Date.now();
-  const info = await withTimeout(
-    transporter.sendMail({
-      from: cfg.from,
-      to,
-      subject: params.subject,
-      text: params.text,
-      html: params.html,
-    }),
-    15_000,
-    'SMTP send timed out',
-  );
-  const durationMs = Date.now() - startedAt;
-  // eslint-disable-next-line no-console
-  console.log(`[mail] sent (duration=${durationMs}ms)`);
-  return { messageId: info.messageId };
+  try {
+    const info = await withTimeout(
+      transporter.sendMail({
+        from: cfg.from,
+        to,
+        subject: params.subject,
+        text: params.text,
+        html: params.html,
+      }),
+      30_000,
+      'SMTP send timed out',
+    );
+    const durationMs = Date.now() - startedAt;
+    // eslint-disable-next-line no-console
+    console.log(`[mail] sent (duration=${durationMs}ms) messageId=${info.messageId ?? '-'}`);
+    return { messageId: info.messageId };
+  } catch (err) {
+    const durationMs = Date.now() - startedAt;
+    // eslint-disable-next-line no-console
+    console.error(`[mail] send failed (duration=${durationMs}ms)`, serializeMailError(err));
+    throw err;
+  } finally {
+    // Best-effort: close underlying sockets (important if we later enable pooling).
+    try {
+      transporter.close();
+    } catch {
+      // ignore
+    }
+  }
 }
 
