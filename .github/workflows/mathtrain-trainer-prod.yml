@@ -76,7 +76,7 @@ jobs:
           envs: SMTP_HOST,SMTP_PORT,SMTP_SECURE,SMTP_USER,SMTP_PASS,SMTP_IP_FAMILY,MAIL_FROM,WEB_BASE_URL,EMAIL_CONFIRM_TTL_HOURS
           script: |
             set -euo pipefail
-            cd /opt/mathtrain/prod
+            cd /opt/math_trainer/prod
             ENV_FILE="./.env"
 
             sanitize_env_value() {
